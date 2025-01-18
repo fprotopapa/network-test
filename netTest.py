@@ -1,48 +1,46 @@
-import pyshark
-# import scapy.all as scapy
-import pktGen as generator
+import os
 
-def capture_live_packets(network_interface):
-    capture = pyshark.LiveCapture(interface=network_interface)
-    for raw_packet in capture.sniff_continuously():
-        print(filter_all_tcp_traffic_file(raw_packet))
+from network import Interface, Fwd, TrafficGen, PktGen
+from utils import Visual, WireShark
+from cmdline import Cmd
 
-def get_packet_details(packet):
-    """
-    This function is designed to parse specific details from an individual packet.
-    :param packet: raw packet from either a pcap file or via live capture using TShark
-    :return: specific packet details
-    """
-    protocol = packet.transport_layer
-    source_address = packet.ip.src
-    source_port = packet[packet.transport_layer].srcport
-    destination_address = packet.ip.dst
-    destination_port = packet[packet.transport_layer].dstport
-    packet_time = packet.sniff_time
-    return f'Packet Timestamp: {packet_time}' \
-           f'\nProtocol type: {protocol}' \
-           f'\nSource address: {source_address}' \
-           f'\nSource port: {source_port}' \
-           f'\nDestination address: {destination_address}' \
-           f'\nDestination port: {destination_port}\n'
-
-
-def filter_all_tcp_traffic_file(packet):
-    """
-    This function is designed to parse all the Transmission Control Protocol(TCP) packets
-    :param packet: raw packet
-    :return: specific packet details
-    """
-    if hasattr(packet, 'tcp'):
-       results = get_packet_details(packet)
-       return results
-
-# capture_live_packets('enp0s25')
-# def send_icmp(ip)
-#     scapy.sr(scapy.IP(dst="192.168.0.1")/scapy.ICMP())
+def fill_interface(args: Cmd, isDst):
+    if isDst:
+        ip = args.get_dst_ip()
+        mac = args.get_dst_mac()
+        intf = args.get_dst_if()
+    else:
+        ip = args.get_src_ip()
+        mac = args.get_src_mac()
+        intf = args.get_src_if() 
+    return Interface(intf, ip, mac)
 
 if __name__ == '__main__':
-    gen = generator.PktGen('enp0s25')
-    gen.test_icmp('192.168.0.1')
-    gen.test_arp('192.168.0.1')
-    gen.show_wireshark()
+    cmdline = Cmd()
+    fwdConf = Fwd()
+    traffic = TrafficGen(timeout=2)
+    gen = PktGen()
+    vis = Visual()
+    ws = WireShark()
+
+    isFwd = cmdline.is_fwd()
+    src = fill_interface(cmdline, False)
+    dst = fill_interface(cmdline, True)
+    
+    if isFwd:
+        fwdConf.config_fwd(src, dst)
+    
+
+    l3 = gen.l3(src, dst)
+    icmp = gen.icmp(l3)
+    l4 = gen.tcp(l3, 1000)
+    pkt = gen.payload(l4, 'Test payload')
+
+    pktLst = traffic.send_pkt(pkt, src)
+    vis.dump_packets(pktLst)
+    vis.show_packets(pktLst)
+    vis.print_pdf(pktLst, os.path.join(os.getcwd(), 'packetList' + '.pdf'))
+    ws.openWireShark(pktLst)
+    pkt = gen.arp(src, dst)
+    pktLst = traffic.send_pkt(pkt, src)
+    vis.show_summary(pktLst)
